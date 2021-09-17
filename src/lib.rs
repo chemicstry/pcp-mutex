@@ -164,7 +164,7 @@ impl<'a, T> Drop for PcpMutexGuard<'a, T> {
             p.thread.unpark();
         }
 
-        // Reset mutex state
+        // Reset mutex state, releasing the lock
         state.mutexes[self.pcp_mutex.index].current_ceiling = 0;
         state.mutexes[self.pcp_mutex.index].holding_thread = None;
     }
