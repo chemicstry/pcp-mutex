@@ -38,18 +38,19 @@ fn main() {
         let a = Arc::clone(&a);
         let b = Arc::clone(&b);
         let handle = thread::spawn(move || {
-            thread::sleep(std::time::Duration::from_micros(1));
             println!("Thread 1 tries a lock");
             a.lock(1, |a| {
                 println!("Thread 1 holds a lock");
                 *a += 1;
-                //thread::sleep(std::time::Duration::from_millis(100));
+                thread::sleep(std::time::Duration::from_micros(1000));
                 println!("Thread 1 tries b lock");
                 b.lock(1, |b| {
                     println!("Thread 1 holds b lock");
                     *b += 1;
                 });
+                println!("Thread 1 released b lock");
             });
+            println!("Thread 1 released a lock");
         });
         handles.push(handle);
     }
@@ -62,13 +63,15 @@ fn main() {
             b.lock(1, |b| {
                 println!("Thread 2 holds b lock");
                 *b += 1;
-                //thread::sleep(std::time::Duration::from_millis(100));
+                thread::sleep(std::time::Duration::from_micros(1000));
                 println!("Thread 2 tries a lock");
                 a.lock(1, |a| {
                     println!("Thread 2 holds a lock");
                     *a += 1;
                 });
+                println!("Thread 2 released a lock");
             });
+            println!("Thread 2 released b lock");
         });
         handles.push(handle);
     }
