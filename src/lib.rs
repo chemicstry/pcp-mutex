@@ -1,20 +1,76 @@
-use std::{
-    cell::UnsafeCell,
-    sync::{
-        atomic::{self, AtomicPtr},
+use std::{cell::{Cell, UnsafeCell}, marker::PhantomData, mem::MaybeUninit, sync::{
+        atomic::{self, AtomicPtr}, 
         Arc,
-    },
-};
+    }};
 
 use linux_futex::PiFutex;
 
-/// Denotes task priority. Higher number means higher priority. Must not be zero.
-pub type Priority = u8;
 
+pub type Priority = u8;
 pub type ThreadId = i32;
 
 const FUTEX_TID_MASK: i32 = PiFutex::<linux_futex::Private>::TID_MASK;
 const FUTEX_WAITERS: i32 = PiFutex::<linux_futex::Private>::WAITERS;
+
+#[derive(Debug)]
+pub struct ThreadPriority {
+    priority: Cell<Priority>,
+    thread: ThreadId,
+    _non_send: PhantomData<* const u8>,
+}
+
+impl ThreadPriority {
+    /// Creates a new thread priority object with a given priority.
+    ///
+    /// # Safety
+    ///
+    /// The given priority and thread id must match that of the current thread.
+    pub unsafe fn new(priority: Priority, thread: ThreadId) -> Self {
+        assert!(priority > 0, "Priority must be greater or equal to 1");
+
+        Self {
+            priority: Cell::new(priority),
+            thread,
+            _non_send: PhantomData::default(),
+        }
+    }
+
+    /// Constructs thread priority object from `sched_getparam` syscall
+    pub fn from_sys() -> Self {
+        let mut sched_param = MaybeUninit::<libc::sched_param>::uninit();
+
+        unsafe {
+            let thread = libc::syscall(libc::SYS_gettid) as _;
+            libc::sched_getparam(0, sched_param.as_mut_ptr());
+            Self::new(sched_param.assume_init().sched_priority as u8, thread)
+        }
+    }
+
+    /// Sets current thread scheduling policy to SCHED_FIFO and sets a given priority
+    pub fn init_fifo(priority: Priority) -> std::io::Result<Self> {
+        let param = libc::sched_param {
+            sched_priority: priority as i32,
+        };
+
+        unsafe {
+            let thread = libc::syscall(libc::SYS_gettid) as _;
+
+            if libc::sched_setscheduler(0, libc::SCHED_FIFO, &param) != 0 {
+                return Err(std::io::Error::last_os_error())
+            } 
+            
+            Ok(Self::new(priority, thread))
+        }
+    }
+
+    fn set(&self, priority: Priority) {
+        self.priority.set(priority);
+    }
+
+    pub fn get(&self) -> Priority {
+        self.priority.get()
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct LockerInfo {
@@ -81,12 +137,12 @@ unsafe impl<T> Sync for PcpMutex<T> where T: Send {}
 impl<T> PcpMutex<T> {
     /// Locks the mutex with the provided current thread priority.
     /// Priority must be greater or equal to 1.
-    pub fn lock<R>(&self, priority: Priority, f: impl FnOnce(&mut T) -> R) -> R {
+    pub fn lock<R>(&self, priority: &ThreadPriority, f: impl FnOnce(&mut T) -> R) -> R {
         use atomic::Ordering::*;
         let state = &self.mgr.state;
 
         let current = LockerInfo {
-            thread: current_thread_id(),
+            thread: priority.thread,
             ceiling: self.ceiling,
         };
 
@@ -95,7 +151,7 @@ impl<T> PcpMutex<T> {
             let previous = unsafe { *prev_ptr };
             // println!("Prev: {:?}, Next: {:?}", previous, current);
 
-            if priority > previous.ceiling {
+            if priority.get() > previous.ceiling {
                 match state.current.compare_exchange(
                     prev_ptr,
                     unsafe { core::mem::transmute(&current) },
@@ -134,7 +190,10 @@ impl<T> PcpMutex<T> {
                     }
                 }
 
+                let prev_priority = priority.get();
+                priority.set(self.ceiling);
                 let res = f(unsafe { &mut *self.res.get() });
+                priority.set(prev_priority);
 
                 loop {
                     match state.current.compare_exchange(
@@ -180,7 +239,7 @@ impl<T> PcpMutex<T> {
                 }
 
                 return res;
-            } else if priority == previous.ceiling && current.thread == previous.thread {
+            } else if priority.get() == previous.ceiling && current.thread == previous.thread {
                 return f(unsafe { &mut *self.res.get() });
             } else {
                 while !state.futex.lock_pi().is_ok() {}
@@ -193,9 +252,4 @@ impl<T> PcpMutex<T> {
     pub fn ceiling(&self) -> Priority {
         self.ceiling
     }
-}
-
-/// Returns current thread id
-fn current_thread_id() -> ThreadId {
-    unsafe { libc::syscall(libc::SYS_gettid) as _ }
 }
