@@ -1,4 +1,10 @@
-use std::{cell::UnsafeCell, sync::{Arc, atomic::{self, AtomicPtr}}};
+use std::{
+    cell::UnsafeCell,
+    sync::{
+        atomic::{self, AtomicPtr},
+        Arc,
+    },
+};
 
 use linux_futex::PiFutex;
 
@@ -32,7 +38,11 @@ impl Default for PcpState {
         });
         let null_locker_ptr = unsafe { core::mem::transmute(&*null_locker) };
 
-        Self { null_locker, current: AtomicPtr::new(null_locker_ptr), futex: Default::default() }
+        Self {
+            null_locker,
+            current: AtomicPtr::new(null_locker_ptr),
+            futex: Default::default(),
+        }
     }
 }
 
@@ -83,11 +93,16 @@ impl<T> PcpMutex<T> {
         loop {
             let prev_ptr = state.current.load(SeqCst);
             let previous = unsafe { *prev_ptr };
-            //println!("Prev: {:?}, Next: {:?}", previous, current);
+            // println!("Prev: {:?}, Next: {:?}", previous, current);
 
-            if priority > previous.ceiling || (priority == previous.ceiling && current.thread == previous.thread) {
-                match state.current.compare_exchange(prev_ptr, unsafe { core::mem::transmute(&current) }, SeqCst, SeqCst) {
-                    Ok(_) => {},
+            if priority > previous.ceiling {
+                match state.current.compare_exchange(
+                    prev_ptr,
+                    unsafe { core::mem::transmute(&current) },
+                    SeqCst,
+                    SeqCst,
+                ) {
+                    Ok(_) => {}
                     // State was changed while running, retry
                     Err(_) => continue,
                 }
@@ -95,13 +110,21 @@ impl<T> PcpMutex<T> {
                 loop {
                     let prev_futex = state.futex.value.load(SeqCst);
 
-                    // We may already hold the futex because UNLOCK_PI queued this thread for execution
+                    // If thread came out of LOCK_PI, it will already have its TID in futex
                     if prev_futex & FUTEX_TID_MASK == current.thread {
                         break;
                     // Try to take the lock from previous owner
                     } else if prev_futex & FUTEX_TID_MASK == previous.thread {
-                        match state.futex.value.compare_exchange(prev_futex, current.thread + (prev_futex & FUTEX_WAITERS), SeqCst, SeqCst) {
-                            Ok(_) => break,
+                        match state.futex.value.compare_exchange(
+                            prev_futex,
+                            current.thread + (prev_futex & FUTEX_WAITERS),
+                            SeqCst,
+                            SeqCst,
+                        ) {
+                            Ok(_) => {
+                                // println!("Futex {}", current.thread + (prev_futex & FUTEX_WAITERS));
+                                break;
+                            }
                             Err(_) => continue,
                         }
                     // Owner has changed while running. This can happen if a higher priority task locked a resource with higher ceiling.
@@ -114,7 +137,12 @@ impl<T> PcpMutex<T> {
                 let res = f(unsafe { &mut *self.res.get() });
 
                 loop {
-                    match state.current.compare_exchange(unsafe { core::mem::transmute(&current) }, prev_ptr, SeqCst, SeqCst) {
+                    match state.current.compare_exchange(
+                        unsafe { core::mem::transmute(&current) },
+                        prev_ptr,
+                        SeqCst,
+                        SeqCst,
+                    ) {
                         Ok(_) => break,
                         // State was changed while running, retry
                         Err(_) => continue,
@@ -127,11 +155,20 @@ impl<T> PcpMutex<T> {
                     if cur_futex & FUTEX_TID_MASK == current.thread {
                         // Wakeup waiter if there are any
                         if cur_futex & FUTEX_WAITERS != 0 {
+                            // println!("{} unlocking", current.thread);
                             state.futex.unlock_pi();
                             break;
                         } else {
-                            match state.futex.value.compare_exchange(cur_futex, previous.thread, SeqCst, SeqCst) {
-                                Ok(_) => break,
+                            match state.futex.value.compare_exchange(
+                                cur_futex,
+                                previous.thread,
+                                SeqCst,
+                                SeqCst,
+                            ) {
+                                Ok(_) => {
+                                    // println!("Futex {}", previous.thread);
+                                    break;
+                                }
                                 // A waiter appeared while running, retry
                                 Err(_) => continue,
                             }
@@ -143,17 +180,11 @@ impl<T> PcpMutex<T> {
                 }
 
                 return res;
+            } else if priority == previous.ceiling && current.thread == previous.thread {
+                return f(unsafe { &mut *self.res.get() });
             } else {
-                loop {
-                    let cur_futex = state.futex.value.load(SeqCst);
-                    if cur_futex & FUTEX_TID_MASK == current.thread {
-                        state.futex.value.compare_exchange(cur_futex, previous.thread + (cur_futex & FUTEX_WAITERS), SeqCst, SeqCst).ok();
-                    }
-
-                    if state.futex.lock_pi().is_ok() {
-                        break;
-                    }
-                }
+                while !state.futex.lock_pi().is_ok() {}
+                // println!("{} resumed. Futex {}", current.thread, state.futex.value.load(SeqCst));
             }
         }
     }
