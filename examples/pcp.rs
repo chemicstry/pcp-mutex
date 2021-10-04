@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-use pcp_mutex::{PcpManager, ThreadPriority};
+use pcp_mutex::{PcpManager, ThreadState};
 
 use lazy_static::lazy_static;
 
@@ -22,7 +22,7 @@ fn _bench<T>(f: impl FnOnce() -> T) -> T {
 }
 
 fn main() {
-    let priority = ThreadPriority::init_fifo(1).unwrap();
+    let priority = ThreadState::init_fifo(1).unwrap();
 
     let a = Arc::new(PCP_MANAGER.create(0, 3));
     let b = Arc::new(PCP_MANAGER.create(0, 3));
@@ -40,7 +40,7 @@ fn main() {
         let a = Arc::clone(&a);
         let b = Arc::clone(&b);
         let handle = thread::spawn(move || {
-            let priority = ThreadPriority::init_fifo(2).unwrap();
+            let priority = ThreadState::init_fifo(2).unwrap();
 
             println!("Thread 1 tries a lock");
             a.lock(&priority, |a| {
@@ -63,7 +63,7 @@ fn main() {
         let a = Arc::clone(&a);
         let b = Arc::clone(&b);
         let handle = thread::spawn(move || {
-            let priority = ThreadPriority::init_fifo(3).unwrap();
+            let priority = ThreadState::init_fifo(3).unwrap();
 
             println!("Thread 2 tries b lock");
             b.lock(&priority, |b| {
