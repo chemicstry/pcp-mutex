@@ -1,9 +1,16 @@
 [package]
 name = "pcp-mutex"
 version = "0.1.0"
+authors = ["Jurgis Balčiūnas <chemicstry@gmail.com>"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "A Priority Ceiling Protocol (PCP) mutex, based on Linux PI futex. Allows efficient and deadlock free execution."
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/chemicstry/pcp-mutex"
+homepage = "https://github.com/chemicstry/pcp-mutex"
+documentation = "https://docs.rs/pcp-mutex"
+keywords = ["thread", "concurrency", "linux"]
+categories = ["concurrency"]
+readme = "README.md"
 
 [dependencies]
 lazy_static = "1.4"
