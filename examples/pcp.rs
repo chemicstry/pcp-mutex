@@ -1,39 +1,14 @@
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
 
-use pcp_mutex::{PcpManager, ThreadState};
-
-use lazy_static::lazy_static;
-
-lazy_static! {
-    /// This is an example for using doc comment attributes
-    static ref PCP_MANAGER: PcpManager = PcpManager::default();
-}
-
-fn _bench<T>(f: impl FnOnce() -> T) -> T {
-    let start = Instant::now();
-    let ret = f();
-    let duration = start.elapsed();
-
-    println!("Time: {:?}", duration);
-
-    ret
-}
+use pcp_mutex::{PcpMutex, ThreadState};
 
 fn main() {
     let priority = ThreadState::init_fifo(1).unwrap();
 
-    let a = Arc::new(PCP_MANAGER.create(0, 3));
-    let b = Arc::new(PCP_MANAGER.create(0, 3));
+    let a = Arc::new(PcpMutex::new(0, 3));
+    let b = Arc::new(PcpMutex::new(0, 3));
 
-    {
-        a.lock(&priority, |t| *t = *t + 1);
-        a.lock(&priority, |t| *t = *t + 1);
-        a.lock(&priority, |t| *t = *t + 1);
-        let test = a.lock(&priority, |t| *t);
-        println!("Test: {}", test);
-    }
     let mut handles = vec![];
 
     {
@@ -46,7 +21,7 @@ fn main() {
             a.lock(&priority, |a| {
                 println!("Thread 1 holds a lock");
                 *a += 1;
-                thread::sleep(std::time::Duration::from_micros(1000));
+                thread::sleep(std::time::Duration::from_millis(100));
                 println!("Thread 1 tries b lock");
                 b.lock(&priority, |b| {
                     println!("Thread 1 holds b lock");
@@ -69,7 +44,7 @@ fn main() {
             b.lock(&priority, |b| {
                 println!("Thread 2 holds b lock");
                 *b += 1;
-                thread::sleep(std::time::Duration::from_micros(1000));
+                thread::sleep(std::time::Duration::from_millis(100));
                 println!("Thread 2 tries a lock");
                 a.lock(&priority, |a| {
                     println!("Thread 2 holds a lock");
@@ -86,5 +61,5 @@ fn main() {
         handle.join().unwrap();
     }
 
-    println!("Done {}", a.lock(&priority, |a| *a)); // never reach here
+    println!("Done a: {}, b: {}", a.lock(&priority, |a| *a), b.lock(&priority, |b| *b));
 }
