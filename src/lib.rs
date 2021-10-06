@@ -341,7 +341,7 @@ impl<'a, T> PcpMutex<'a, T> {
                         .compare_exchange(thread_info.thread_id, 0, SeqCst, SeqCst)
                 {
                     // Lock could already have been unlocked by a recursive self.lock() call
-                    if val != 0 {
+                    if val & FUTEX_TID_MASK == thread_info.thread_id {
                         highest.futex.unlock_pi();
                     }
                 }
