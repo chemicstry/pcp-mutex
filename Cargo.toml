@@ -1,6 +1,6 @@
 [package]
 name = "pcp-mutex"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Jurgis Balčiūnas <chemicstry@gmail.com>"]
 edition = "2021"
 description = "A Priority Ceiling Protocol (PCP) mutex, based on Linux PI futex. Allows efficient and deadlock free execution."

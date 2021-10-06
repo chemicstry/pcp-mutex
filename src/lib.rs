@@ -10,7 +10,7 @@ use std::{
     },
 };
 
-pub type Priority = i8;
+pub type Priority = u8;
 pub type ThreadId = i32;
 
 // Futex can contain WAITERS bit, so we use mask to obtain thread id
@@ -41,8 +41,6 @@ impl ThreadState {
     ///
     /// The given priority and thread id must be valid.
     pub unsafe fn new(priority: Priority, thread_id: ThreadId) -> Self {
-        assert!(priority >= 0, "Priority must be greater or equal to 0");
-
         Self {
             priority: Cell::new(priority),
             thread_id,
@@ -57,7 +55,7 @@ impl ThreadState {
         unsafe {
             let thread_id = libc::syscall(libc::SYS_gettid) as _;
             libc::sched_getparam(0, sched_param.as_mut_ptr());
-            Self::new(sched_param.assume_init().sched_priority as i8, thread_id)
+            Self::new(sched_param.assume_init().sched_priority as u8, thread_id)
         }
     }
 
