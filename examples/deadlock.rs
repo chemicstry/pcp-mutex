@@ -7,8 +7,8 @@ fn main() {
     let mut handles = vec![];
 
     {
-        let a = Arc::clone(&a);
-        let b = Arc::clone(&b);
+        let a = a.clone();
+        let b = b.clone();
         let handle = thread::spawn(move || {
             println!("Thread 1 tries a lock");
             let mut a_num = a.lock().unwrap();
@@ -28,8 +28,8 @@ fn main() {
     }
 
     {
-        let a = Arc::clone(&a);
-        let b = Arc::clone(&b);
+        let a = a.clone();
+        let b = b.clone();
         let handle = thread::spawn(move || {
             println!("Thread 2 tries b lock");
             let mut b_num = b.lock().unwrap();

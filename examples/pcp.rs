@@ -4,7 +4,7 @@ use std::thread;
 use pcp_mutex::{PcpMutex, ThreadState};
 
 fn main() {
-    let priority = ThreadState::init_fifo(1).unwrap();
+    let priority = ThreadState::from_sys();
 
     let a = Arc::new(PcpMutex::new(0, 3));
     let b = Arc::new(PcpMutex::new(0, 3));
@@ -12,10 +12,10 @@ fn main() {
     let mut handles = vec![];
 
     {
-        let a = Arc::clone(&a);
-        let b = Arc::clone(&b);
+        let a = a.clone();
+        let b = b.clone();
         let handle = thread::spawn(move || {
-            let priority = ThreadState::init_fifo(2).unwrap();
+            let priority = ThreadState::from_sys();
 
             println!("Thread 1 tries a lock");
             a.lock(&priority, |a| {
@@ -35,10 +35,10 @@ fn main() {
     }
 
     {
-        let a = Arc::clone(&a);
-        let b = Arc::clone(&b);
+        let a = a.clone();
+        let b = b.clone();
         let handle = thread::spawn(move || {
-            let priority = ThreadState::init_fifo(3).unwrap();
+            let priority = ThreadState::from_sys();
 
             println!("Thread 2 tries b lock");
             b.lock(&priority, |b| {

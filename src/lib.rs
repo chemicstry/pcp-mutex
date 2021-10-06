@@ -10,7 +10,7 @@ use std::{
     },
 };
 
-pub type Priority = u8;
+pub type Priority = i8;
 pub type ThreadId = i32;
 
 const FUTEX_TID_MASK: i32 = PiFutex::<linux_futex::Private>::TID_MASK;
@@ -40,7 +40,7 @@ impl ThreadState {
     ///
     /// The given priority and thread id must match that of the current thread.
     pub unsafe fn new(priority: Priority, thread_id: ThreadId) -> Self {
-        assert!(priority > 0, "Priority must be greater or equal to 1");
+        assert!(priority >= 0, "Priority must be greater or equal to 0");
 
         Self {
             priority: Cell::new(priority),
@@ -56,7 +56,7 @@ impl ThreadState {
         unsafe {
             let thread_id = libc::syscall(libc::SYS_gettid) as _;
             libc::sched_getparam(0, sched_param.as_mut_ptr());
-            Self::new(sched_param.assume_init().sched_priority as u8, thread_id)
+            Self::new(sched_param.assume_init().sched_priority as i8, thread_id)
         }
     }
 
