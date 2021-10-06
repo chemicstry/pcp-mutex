@@ -13,6 +13,7 @@ use std::{
 pub type Priority = i8;
 pub type ThreadId = i32;
 
+// Futex can contain WAITERS bit, so we use mask to obtain thread id
 const FUTEX_TID_MASK: i32 = PiFutex::<linux_futex::Private>::TID_MASK;
 
 lazy_static! {
@@ -34,11 +35,11 @@ pub struct ThreadState {
 }
 
 impl ThreadState {
-    /// Creates a new thread priority object with a given priority.
+    /// Creates a new `ThreadState` with a given priority.
     ///
     /// # Safety
     ///
-    /// The given priority and thread id must match that of the current thread.
+    /// The given priority and thread id must be valid.
     pub unsafe fn new(priority: Priority, thread_id: ThreadId) -> Self {
         assert!(priority >= 0, "Priority must be greater or equal to 0");
 
@@ -49,7 +50,7 @@ impl ThreadState {
         }
     }
 
-    /// Constructs thread priority object from `gettid` and `sched_getparam` syscalls
+    /// Constructs `ThreadState` from `gettid` and `sched_getparam` syscalls
     pub fn from_sys() -> Self {
         let mut sched_param = MaybeUninit::<libc::sched_param>::uninit();
 
@@ -60,7 +61,7 @@ impl ThreadState {
         }
     }
 
-    /// Sets current thread scheduling policy to SCHED_FIFO with a given priority
+    /// Sets current thread scheduling policy to SCHED_FIFO with a given priority and returns `ThreadState`
     pub fn init_fifo(priority: Priority) -> std::io::Result<Self> {
         let param = libc::sched_param {
             sched_priority: priority as i32,
@@ -77,6 +78,12 @@ impl ThreadState {
         }
     }
 
+    /// Returns id of the thread
+    pub fn thread_id(&self) -> ThreadId {
+        self.thread_id
+    }
+
+    /// Internal method for setting priority to the locked resource ceiling.
     fn set_priority(&self, priority: Priority) {
         self.priority.set(priority);
     }
@@ -117,7 +124,7 @@ struct PcpMutexLock {
     futex: PiFutex<Private>,
 }
 
-/// A Priority Ceiling Protocol enabled Mutex
+/// A Priority Ceiling Protocol mutex
 #[derive(Debug)]
 pub struct PcpMutex<'a, T> {
     /// Resource protected by the mutex
@@ -322,17 +329,21 @@ impl<'a, T> PcpMutex<'a, T> {
                 // can_lock will not return false if Option is None so this never fails
                 let highest = highest.unwrap();
 
+                // Suspend current thread. Kernel will raise the locker priority automatically.
                 while !highest.futex.lock_pi().is_ok() {}
 
+                // Retry locking recursively
                 let res = self.lock(thread_info, f);
 
+                // Release the acquired `highest` lock
                 if let Err(val) =
                     highest
                         .futex
                         .value
                         .compare_exchange(thread_info.thread_id, 0, SeqCst, SeqCst)
                 {
-                    if val & FUTEX_TID_MASK == thread_info.thread_id {
+                    // Lock could already have been unlocked by a recursive self.lock() call
+                    if val != 0 {
                         highest.futex.unlock_pi();
                     }
                 }

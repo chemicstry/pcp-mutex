@@ -61,5 +61,9 @@ fn main() {
         handle.join().unwrap();
     }
 
-    println!("Done a: {}, b: {}", a.lock(&priority, |a| *a), b.lock(&priority, |b| *b));
+    println!(
+        "Done a: {}, b: {}",
+        a.lock(&priority, |a| *a),
+        b.lock(&priority, |b| *b)
+    );
 }
