@@ -18,13 +18,13 @@ This is different from POSIX `PTHREAD_PRIO_PROTECT` mutexes in two ways:
 - POSIX mutex calls `sched_setparam` syscall on each lock/unlock, which is much slower. This library has only atomic operations in the fast path.
 - POSIX mutexes are individual (no system ceiling) and do not prevent deadlocks. It is not a 'real' PCP.
 
+Each thread also holds an internal thread-local `ThreadState` object which contains the thread id (from `gettid` syscall) and priority (from `sched_getparam`) for internal logic. If thread priority is changed manually (i.e. `sched_setparam` syscall), then `thread::update_priority()` must be called to update internal state. For real-time applications there is a convenience function `thread::init_fifo_priority(priority: u8)`, which sets scheduling policy to `SCHED_FIFO` with a given priority and also updates the internal state. Avoid changing thread priority while holding a mutex as that might cause a deadlock.
+
 ## Example
 
 Locking 2 mutexes in different order would result in deadlock, but PCP prevents that:
 
 ```rust
-let priority = ThreadState::from_sys();
-
 let a = Arc::new(PcpMutex::new(0, 3));
 let b = Arc::new(PcpMutex::new(0, 3));
 
@@ -32,15 +32,13 @@ let b = Arc::new(PcpMutex::new(0, 3));
     let a = a.clone();
     let b = b.clone();
     thread::spawn(move || {
-        let priority = ThreadState::from_sys();
-
         println!("Thread 1 tries a lock");
-        a.lock(&priority, |a| {
+        a.lock(|a| {
             println!("Thread 1 holds a lock");
             *a += 1;
             thread::sleep(std::time::Duration::from_millis(100));
             println!("Thread 1 tries b lock");
-            b.lock(&priority, |b| {
+            b.lock(|b| {
                 println!("Thread 1 holds b lock");
                 *b += 1;
             });
@@ -54,15 +52,13 @@ let b = Arc::new(PcpMutex::new(0, 3));
     let a = a.clone();
     let b = b.clone();
     thread::spawn(move || {
-        let priority = ThreadState::from_sys();
-
         println!("Thread 2 tries b lock");
-        b.lock(&priority, |b| {
+        b.lock(|b| {
             println!("Thread 2 holds b lock");
             *b += 1;
             thread::sleep(std::time::Duration::from_millis(100));
             println!("Thread 2 tries a lock");
-            a.lock(&priority, |a| {
+            a.lock(|a| {
                 println!("Thread 2 holds a lock");
                 *a += 1;
             });

@@ -28,7 +28,7 @@ lazy_static! {
 
 /// A helper object that contains thread id and keeps track of current priority
 #[derive(Debug)]
-pub struct ThreadState {
+struct ThreadState {
     priority: Cell<Priority>,
     thread_id: ThreadId,
     _non_send: PhantomData<*const u8>,
@@ -40,7 +40,7 @@ impl ThreadState {
     /// # Safety
     ///
     /// The given priority and thread id must be valid.
-    pub unsafe fn new(priority: Priority, thread_id: ThreadId) -> Self {
+    unsafe fn new(priority: Priority, thread_id: ThreadId) -> Self {
         Self {
             priority: Cell::new(priority),
             thread_id,
@@ -49,7 +49,7 @@ impl ThreadState {
     }
 
     /// Constructs `ThreadState` from `gettid` and `sched_getparam` syscalls
-    pub fn from_sys() -> Self {
+    fn from_sys() -> Self {
         let mut sched_param = MaybeUninit::<libc::sched_param>::uninit();
 
         unsafe {
@@ -59,36 +59,62 @@ impl ThreadState {
         }
     }
 
-    /// Sets current thread scheduling policy to SCHED_FIFO with a given priority and returns `ThreadState`
-    pub fn init_fifo(priority: Priority) -> std::io::Result<Self> {
-        let param = libc::sched_param {
-            sched_priority: priority as i32,
-        };
-
-        unsafe {
-            let thread = libc::syscall(libc::SYS_gettid) as _;
-
-            if libc::sched_setscheduler(0, libc::SCHED_FIFO, &param) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-
-            Ok(Self::new(priority, thread))
-        }
-    }
-
-    /// Returns id of the thread
-    pub fn thread_id(&self) -> ThreadId {
-        self.thread_id
-    }
-
     /// Internal method for setting priority to the locked resource ceiling.
     fn set_priority(&self, priority: Priority) {
         self.priority.set(priority);
     }
 
     /// Returns the current thread priority
-    pub fn get_priority(&self) -> Priority {
+    fn get_priority(&self) -> Priority {
         self.priority.get()
+    }
+}
+
+pub mod thread {
+    use crate::{Priority, ThreadState};
+    use std::mem::MaybeUninit;
+
+    thread_local! {
+        pub(crate) static THREAD_STATE: ThreadState = ThreadState::from_sys()
+    }
+
+    /// Updates internal base thread priority from `sched_getparam` syscall. Must be called if thread priority is changed manually.
+    pub fn update_priority() -> std::io::Result<()> {
+        let mut sched_param = MaybeUninit::<libc::sched_param>::uninit();
+
+        let priority = unsafe {
+            if libc::sched_getparam(0, sched_param.as_mut_ptr()) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            sched_param.assume_init().sched_priority as u8
+        };
+
+        THREAD_STATE.with(|s| s.set_priority(priority));
+
+        Ok(())
+    }
+
+    /// Sets current thread scheduling policy to SCHED_FIFO with a given priority.
+    pub fn init_fifo_priority(priority: Priority) -> std::io::Result<()> {
+        let param = libc::sched_param {
+            sched_priority: priority as i32,
+        };
+
+        unsafe {
+            if libc::sched_setscheduler(0, libc::SCHED_FIFO, &param) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+
+        THREAD_STATE.with(|s| s.set_priority(priority));
+
+        Ok(())
+    }
+
+    /// Returns the current dynamic thread priority
+    pub fn get_priority() -> Priority {
+        THREAD_STATE.with(|s| s.priority.get())
     }
 }
 
@@ -219,7 +245,12 @@ impl<'a, T> PcpMutex<'a, T> {
     }
 
     /// Locks the mutex and executes critical section in a closure.
-    pub fn lock<R>(&'a self, thread_info: &ThreadState, f: impl FnOnce(&mut T) -> R) -> R {
+    pub fn lock<R>(&'a self, f: impl FnOnce(&mut T) -> R) -> R {
+        thread::THREAD_STATE.with(|thread_state| self.lock_internal(thread_state, f))
+    }
+
+    /// Locks the mutex and executes critical section in a closure.
+    fn lock_internal<R>(&'a self, thread_info: &ThreadState, f: impl FnOnce(&mut T) -> R) -> R {
         use atomic::Ordering::*;
 
         // Get pointer to our lock.
@@ -331,7 +362,7 @@ impl<'a, T> PcpMutex<'a, T> {
                 while !highest.futex.lock_pi().is_ok() {}
 
                 // Retry locking recursively
-                let res = self.lock(thread_info, f);
+                let res = self.lock_internal(thread_info, f);
 
                 // Release the acquired `highest` lock
                 if let Err(val) =
